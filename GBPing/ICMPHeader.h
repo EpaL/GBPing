@@ -17,7 +17,7 @@
 
 // IP header structure:
 
-struct IPHeader {
+struct GBIPHeader {
     uint8_t     versionAndHeaderLength;
     uint8_t     differentiatedServices;
     uint16_t    totalLength;
@@ -31,19 +31,19 @@ struct IPHeader {
     // options...
     // data...
 };
-typedef struct IPHeader IPHeader;
+typedef struct GBIPHeader GBIPHeader;
 
-__Check_Compile_Time(sizeof(IPHeader) == 20);
-__Check_Compile_Time(offsetof(IPHeader, versionAndHeaderLength) == 0);
-__Check_Compile_Time(offsetof(IPHeader, differentiatedServices) == 1);
-__Check_Compile_Time(offsetof(IPHeader, totalLength) == 2);
-__Check_Compile_Time(offsetof(IPHeader, identification) == 4);
-__Check_Compile_Time(offsetof(IPHeader, flagsAndFragmentOffset) == 6);
-__Check_Compile_Time(offsetof(IPHeader, timeToLive) == 8);
-__Check_Compile_Time(offsetof(IPHeader, protocol) == 9);
-__Check_Compile_Time(offsetof(IPHeader, headerChecksum) == 10);
-__Check_Compile_Time(offsetof(IPHeader, sourceAddress) == 12);
-__Check_Compile_Time(offsetof(IPHeader, destinationAddress) == 16);
+__Check_Compile_Time(sizeof(GBIPHeader) == 20);
+__Check_Compile_Time(offsetof(GBIPHeader, versionAndHeaderLength) == 0);
+__Check_Compile_Time(offsetof(GBIPHeader, differentiatedServices) == 1);
+__Check_Compile_Time(offsetof(GBIPHeader, totalLength) == 2);
+__Check_Compile_Time(offsetof(GBIPHeader, identification) == 4);
+__Check_Compile_Time(offsetof(GBIPHeader, flagsAndFragmentOffset) == 6);
+__Check_Compile_Time(offsetof(GBIPHeader, timeToLive) == 8);
+__Check_Compile_Time(offsetof(GBIPHeader, protocol) == 9);
+__Check_Compile_Time(offsetof(GBIPHeader, headerChecksum) == 10);
+__Check_Compile_Time(offsetof(GBIPHeader, sourceAddress) == 12);
+__Check_Compile_Time(offsetof(GBIPHeader, destinationAddress) == 16);
 
 // ICMP type and code combinations:
 
@@ -59,7 +59,7 @@ enum {
 
 // ICMP header structure:
 
-struct ICMPHeader {
+struct GBICMPHeader {
     uint8_t     type;
     uint8_t     code;
     uint16_t    checksum;
@@ -67,14 +67,14 @@ struct ICMPHeader {
     uint16_t    sequenceNumber;
     // data...
 };
-typedef struct ICMPHeader ICMPHeader;
+typedef struct GBICMPHeader GBICMPHeader;
 
-__Check_Compile_Time(sizeof(ICMPHeader) == 8);
-__Check_Compile_Time(offsetof(ICMPHeader, type) == 0);
-__Check_Compile_Time(offsetof(ICMPHeader, code) == 1);
-__Check_Compile_Time(offsetof(ICMPHeader, checksum) == 2);
-__Check_Compile_Time(offsetof(ICMPHeader, identifier) == 4);
-__Check_Compile_Time(offsetof(ICMPHeader, sequenceNumber) == 6);
+__Check_Compile_Time(sizeof(GBICMPHeader) == 8);
+__Check_Compile_Time(offsetof(GBICMPHeader, type) == 0);
+__Check_Compile_Time(offsetof(GBICMPHeader, code) == 1);
+__Check_Compile_Time(offsetof(GBICMPHeader, checksum) == 2);
+__Check_Compile_Time(offsetof(GBICMPHeader, identifier) == 4);
+__Check_Compile_Time(offsetof(GBICMPHeader, sequenceNumber) == 6);
 
 
 #endif
