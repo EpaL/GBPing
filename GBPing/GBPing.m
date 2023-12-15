@@ -580,7 +580,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
                                                                    [self.timeoutTimers removeObjectForKey:key];
         
 //                                                                         self.isPinging = NO;
-                                                                  [self stop];
+                                                                  // [self stop];
                                                                }]
                                                              selector:@selector(main)
                                                              userInfo:nil
