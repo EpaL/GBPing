@@ -786,19 +786,21 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 
 - (BOOL)isValidPingResponsePacket:(NSMutableData *)packet
 {
-  BOOL result;
+  BOOL result = NO;
   
-  switch (self.hostAddressFamily) {
-    case AF_INET: {
-      result = [self isValidPing4ResponsePacket:packet];
-    } break;
-    case AF_INET6: {
-      result = [self isValidPing6ResponsePacket:packet];
-    } break;
-    default: {
-      assert(NO);
-      result = NO;
-    } break;
+  if (self.hostAddressFamily != nil) {
+    switch (self.hostAddressFamily) {
+      case AF_INET: {
+        result = [self isValidPing4ResponsePacket:packet];
+      } break;
+      case AF_INET6: {
+        result = [self isValidPing6ResponsePacket:packet];
+      } break;
+      default: {
+        assert(NO);
+        result = NO;
+      } break;
+    }
   }
   return result;
 }
