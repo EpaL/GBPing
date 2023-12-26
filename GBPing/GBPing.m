@@ -788,7 +788,7 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 {
   BOOL result = NO;
   
-  if (packet != nil) {
+  if (self.packet != nil) {
     switch (self.hostAddressFamily) {
       case AF_INET: {
         result = [self isValidPing4ResponsePacket:packet];
