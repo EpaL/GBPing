@@ -409,7 +409,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
           [_pendingPingsLock unlock];
 
           if (pingSummary) {
-            if ([self isValidPingResponsePacket:packet]) {
+            if ([self isValidPingResponsePacket:packet] == YES) {
               //override the source address (we might have sent to google.com and 172.123.213.192 replied)
               pingSummary.receiveDate = receiveDate;
               // IP can't be read from header for ICMPv6
@@ -797,7 +797,8 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
         result = [self isValidPing6ResponsePacket:packet];
       } break;
       default: {
-        assert(NO);
+        // There are reasons why we might receive an invalid Ping packet. Handle this condition gracefully instead of crashing.
+        // assert(NO);
         result = NO;
       } break;
     }
