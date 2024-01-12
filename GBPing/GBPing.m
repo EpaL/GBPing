@@ -447,7 +447,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
           }
         }
       } else {
-        NSLog(@"GBPing: Hostname matched but GBPingSummary with sequence number (%d) not found.", seqNo);
+        NSLog(@"GBPing: Hostname matched but GBPingSummary with sequence number (%lu) not found.", (unsigned long)seqNo);
         // Create a dummy GBPingSummary (since we won't have one in self.pendingPings).
         GBPingSummary *pingSummary = [GBPingSummary new];
 
