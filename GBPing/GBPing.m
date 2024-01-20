@@ -467,7 +467,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
       }
     } else {
       // The hostname of the reply packet didn't match the expected hostname.
-      NSLog(@"%@: Host didn't match: %@", self.hostAddressString, host);
+//      NSLog(@"%@: Host didn't match: %@", self.hostAddressString, host);
     }
   }
   else {
@@ -566,6 +566,10 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 
       //increment sequence number
       self.nextSequenceNumber += 1;
+      // Prevent the sequence number from overrunning
+      if (self.nextSequenceNumber >= UINT16_MAX) {
+        self.nextSequenceNumber = 0;
+      }
 
       //we create a copy, this one will be passed out to other threads
       GBPingSummary *pingSummaryCopy = [newPingSummary copy];
