@@ -692,6 +692,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
         [_pendingPingsLock unlock];
       }
       self.pendingPings = nil;
+  
       for (NSNumber *key in [self.timeoutTimers copy]) {
         NSTimer *timer = self.timeoutTimers[key];
         [timer invalidate];
@@ -932,8 +933,10 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
   sa_family_t result;
 
   result = AF_UNSPEC;
-  if ( (self.hostAddress != nil) && (self.hostAddress.length >= sizeof(struct sockaddr)) ) {
-    result = ((const struct sockaddr *) self.hostAddress.bytes)->sa_family;
+  if (self.hostAddress != nil && 
+      self.hostAddress.bytes != nil && 
+      self.hostAddress.length >= sizeof(struct sockaddr)) {
+    result = ((const struct sockaddr *)self.hostAddress.bytes)->sa_family;
   }
   return result;
 }
