@@ -55,11 +55,12 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 @end
 
 @implementation GBPing {
-  NSUInteger _payloadSize;
-  NSUInteger _ttl;
+  NSUInteger     _payloadSize;
+  NSUInteger     _ttl;
   NSTimeInterval _timeout;
   NSTimeInterval _pingPeriod;
-  NSLock                                              *_pendingPingsLock;
+  NSLock        *_pendingPingsLock;
+  sa_family_t     hostAddressFamily;
 }
 
 #pragma mark - custom acc
@@ -164,7 +165,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 
 -(void)setupWithBlock:(StartupCallback)callback {
   //error out of its already setup
-  if (self.isReady) {
+  if (self.isReady == YES) {
     if (self.debug) {
       NSLog(@"GBPing: Can't setup, already setup.");
     }
@@ -194,6 +195,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
   self.pendingPings = [[NSMutableDictionary alloc] init];
   self.timeoutTimers = [[NSMutableDictionary alloc] init];
   _pendingPingsLock = [[NSLock alloc] init];
+  hostAddressFamily = AF_UNSPEC;
 
   dispatch_async(self.setupQueue, ^{
     CFStreamError streamError;
@@ -253,8 +255,9 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
         if ([address length] >= sizeof(struct sockaddr) &&
             (anAddrPtr->sa_family == AF_INET || anAddrPtr->sa_family == AF_INET6)) {
 
-          resolved = true;
           self.hostAddress = address;
+          self->hostAddressFamily = anAddrPtr->sa_family;
+          resolved = true;
           struct sockaddr_in *sin = (struct sockaddr_in *)anAddrPtr;
           char str[INET6_ADDRSTRLEN];
           inet_ntop(anAddrPtr->sa_family, &(sin->sin_addr), str, INET6_ADDRSTRLEN);
@@ -283,7 +286,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 
     //set up socket
     int err = 0;
-    switch (self.hostAddressFamily) {
+    switch (hostAddressFamily) {
     case AF_INET: {
       self.socket = socket(AF_INET, SOCK_DGRAM, IPPROTO_ICMP);
       if (self.socket < 0) {
@@ -406,7 +409,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
       GBPingSummary *pingSummary = [(GBPingSummary *)self.pendingPings[key] copy];
       [_pendingPingsLock unlock];
 
-      if (pingSummary) {
+      if (pingSummary != nil) {
         if ([self isValidPingResponsePacket:packet] == YES) {
           //override the source address (we might have sent to google.com and 172.123.213.192 replied)
           pingSummary.receiveDate = receiveDate;
@@ -436,8 +439,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
               [self.delegate ping:self didReceiveReplyWithSummary:[pingSummary copy]];
             });
           }
-        }
-        else {
+        } else {
           pingSummary.status = GBPingStatusFail;
 
           if (self.delegate && [self.delegate respondsToSelector:@selector(ping:didReceiveUnexpectedReplyWithSummary:)] ) {
@@ -447,22 +449,26 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
           }
         }
       } else {
-        NSLog(@"GBPing: Hostname matched but GBPingSummary with sequence number (%lu) not found.", (unsigned long)seqNo);
-        // Create a dummy GBPingSummary (since we won't have one in self.pendingPings).
-        GBPingSummary *pingSummary = [GBPingSummary new];
+        if ([self isValidPingResponsePacket:packet] == YES) {
+          NSLog(@"GBPing: Hostname '%@' matched but GBPingSummary with sequence number (%lu) not found.", self.hostAddressString, (unsigned long)seqNo);
+          // Create a dummy GBPingSummary (since we won't have one in self.pendingPings).
+          GBPingSummary *pingSummary = [GBPingSummary new];
 
-        // construct ping summary, as much as it can
-        pingSummary.sequenceNumber = seqNo;
-        pingSummary.host = host;
-        pingSummary.sendDate = [NSDate date];
-        pingSummary.ttl = 0;
-        pingSummary.payloadSize = 0;
-        pingSummary.status = GBPingStatusFail;
+          // construct ping summary, as much as it can
+          pingSummary.sequenceNumber = seqNo;
+          pingSummary.host = host;
+          pingSummary.sendDate = [NSDate date];
+          pingSummary.ttl = 0;
+          pingSummary.payloadSize = 0;
+          pingSummary.status = GBPingStatusFail;
 
-        if (self.delegate && [self.delegate respondsToSelector:@selector(ping:didReceiveUnexpectedReplyWithSummary:)] ) {
-          dispatch_async(dispatch_get_main_queue(), ^{
-            [self.delegate ping:self didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
-          });
+          if (self.delegate && [self.delegate respondsToSelector:@selector(ping:didReceiveUnexpectedReplyWithSummary:)] ) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+              [self.delegate ping:self didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
+            });
+          }
+        } else {
+          NSLog(@"GBPing: Received ICMP packet from '%@' that didn't match the next sequence number (%lu) but packet was not valid ICMP Ping Response packet so ignoring.", self.hostAddressString, (unsigned long)seqNo);
         }
       }
     } else {
@@ -527,7 +533,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
     // Construct the ping packet.
     NSData *payload = [self generateDataWithLength:(self.payloadSize)];
 
-    switch (self.hostAddressFamily) {
+    switch (hostAddressFamily) {
     case AF_INET: {
       packet = [self pingPacketWithType:kICMPv4TypeEchoRequest payload:payload requiresChecksum:YES];
     } break;
@@ -670,9 +676,8 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 
 -(void)stop {
   @synchronized(self) {
-    if (!self.isStopped) {
+    if (self.isStopped == NO) {
       self.isPinging = NO;
-
       self.isReady = NO;
 
       //destroy listenThread by closing socket (listenThread)
@@ -683,6 +688,7 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
 
       //destroy host
       self.hostAddress = nil;
+      hostAddressFamily = AF_UNSPEC;
 
       //clean up pendingpings
 
@@ -810,8 +816,8 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 {
   BOOL result = NO;
 
-  if (packet != nil) {
-    switch (self.hostAddressFamily) {
+  if (packet != nil && self.isReady == YES) {
+    switch (hostAddressFamily) {
     case AF_INET: {
       result = [self isValidPing4ResponsePacket:packet];
     } break;
@@ -828,9 +834,9 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
   return result;
 }
 
-- (BOOL)isValidPing4ResponsePacket:(NSMutableData *)packet
 // Returns true if the packet looks like a valid ping response packet destined
 // for us.
+- (BOOL)isValidPing4ResponsePacket:(NSMutableData *)packet
 {
   BOOL result;
   NSUInteger icmpHeaderOffset;
@@ -858,15 +864,17 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
         }
       }
     }
+//    NSLog(@"valid: %d, type: %d", result, icmpPtr->type);
+  } else {
+    NSLog(@"GBPing error: ICMP header not found.");
   }
 
-  //    NSLog(@"valid: %@, type: %d", _b(result), icmpPtr->type);
   return result;
 }
 
-- (BOOL)isValidPing6ResponsePacket:(NSMutableData *)packet
 // Returns true if the IPv6 packet looks like a valid ping response packet destined
 // for us.
+- (BOOL)isValidPing6ResponsePacket:(NSMutableData *)packet
 {
   BOOL result;
   const GBICMPHeader *      icmpPtr;
@@ -929,17 +937,17 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
   return packet;
 }
 
-- (sa_family_t)hostAddressFamily {
-  sa_family_t result;
-
-  result = AF_UNSPEC;
-  if (self.hostAddress != nil && 
-      self.hostAddress.bytes != nil && 
-      self.hostAddress.length >= sizeof(struct sockaddr)) {
-    result = ((const struct sockaddr *)self.hostAddress.bytes)->sa_family;
-  }
-  return result;
-}
+//- (sa_family_t)hostAddressFamily {
+//  sa_family_t result;
+//
+//  result = AF_UNSPEC;
+//  if (self.hostAddress != nil && 
+//      self.hostAddress.bytes != nil && 
+//      self.hostAddress.length >= sizeof(struct sockaddr)) {
+//    result = ((const struct sockaddr *)self.hostAddress.bytes)->sa_family;
+//  }
+//  return result;
+//}
 
 #pragma mark - memory
 
@@ -961,6 +969,7 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
   self.pendingPings = nil;
   [_pendingPingsLock unlock];
   self.hostAddress = nil;
+  hostAddressFamily = AF_UNSPEC;
   _pendingPingsLock = nil;
 
   //clean up socket to be sure
