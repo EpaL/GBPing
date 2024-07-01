@@ -439,15 +439,16 @@ static NSTimeInterval const kDefaultTimeout =           2.0;
               [self.delegate ping:self didReceiveReplyWithSummary:[pingSummary copy]];
             });
           }
-        } else {
-          pingSummary.status = GBPingStatusFail;
-
-          if (self.delegate && [self.delegate respondsToSelector:@selector(ping:didReceiveUnexpectedReplyWithSummary:)] ) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-              [self.delegate ping:self didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
-            });
-          }
         }
+//        else {
+//          pingSummary.status = GBPingStatusFail;
+//
+//          if (self.delegate && [self.delegate respondsToSelector:@selector(ping:didReceiveUnexpectedReplyWithSummary:)] ) {
+//            dispatch_async(dispatch_get_main_queue(), ^{
+//              [self.delegate ping:self didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
+//            });
+//          }
+//        }
       } else {
         if ([self isValidPingResponsePacket:packet] == YES) {
           NSLog(@"GBPing: Hostname '%@' matched but GBPingSummary with sequence number (%lu) not found.", self.hostAddressString, (unsigned long)seqNo);
