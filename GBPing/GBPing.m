@@ -1192,7 +1192,9 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 
 - (id)init {
   if (self = [super init]) {
-    self.setupQueue = dispatch_queue_create("GBPing setup queue", 0);
+    dispatch_queue_attr_t attr = dispatch_queue_attr_make_with_qos_class(
+        DISPATCH_QUEUE_SERIAL, QOS_CLASS_UTILITY, 0);
+    self.setupQueue = dispatch_queue_create("GBPing setup queue", attr);
     self.isStopped = YES;
     self.identifier = arc4random();
     self.timeoutTimersLock = [[NSLock alloc] init];
