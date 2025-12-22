@@ -34,7 +34,7 @@ static NSTimeInterval const kPendingPingsCleanupGrace = 1.0;
 // Grace period after setup to ignore sequence number mismatches from stale ICMP
 // packets This prevents spurious errors after wake from sleep when old
 // responses arrive for previous sessions
-static NSTimeInterval const kTransitionGracePeriod = 2.0;
+static NSTimeInterval const kTransitionGracePeriod = 5.0;
 
 static NSUInteger const kDefaultPayloadSize = 56;
 static NSUInteger const kDefaultTTL = 49;
@@ -331,25 +331,36 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
     }
 
     // set ttl on the socket
-    if (self.ttl) {
+    if (self.ttl && self.socket > 0) {
       int result = 0;
+      int savedErrno = 0;
       switch (self->hostAddressFamily) {
       case AF_INET: {
         u_char ttlForSockOpt = (u_char)self.ttl;
         result = setsockopt(self.socket, IPPROTO_IP, IP_TTL, &ttlForSockOpt,
                             sizeof(ttlForSockOpt));
+        if (result < 0)
+          savedErrno = errno;
       } break;
       case AF_INET6: {
         int hops = (int)self.ttl;
         result = setsockopt(self.socket, IPPROTO_IPV6, IPV6_UNICAST_HOPS, &hops,
                             sizeof(hops));
+        if (result < 0)
+          savedErrno = errno;
       } break;
       default:
         break;
       }
 
       if (result < 0 && self.debug) {
-        NSLog(@"GBPing: Failed to set TTL with error code: %d", errno);
+        // EINVAL (22) can occur if socket is not in proper state, which can
+        // happen during rapid reinit cycles. This is non-fatal as default TTL
+        // will be used.
+        NSLog(@"GBPing: Failed to set TTL with error code: %d (ttl=%lu, "
+              @"socket=%d, family=%d)",
+              savedErrno, (unsigned long)self.ttl, self.socket,
+              self->hostAddressFamily);
       }
     }
 
