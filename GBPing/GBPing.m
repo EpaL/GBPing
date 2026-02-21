@@ -64,6 +64,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
 // Track when setup completed to implement transition grace period
 @property(strong, atomic) NSDate *setupCompletionTime;
 
+// Count of stale packets suppressed during transition grace period
+@property(assign, nonatomic) NSUInteger stalePacketsSuppressed;
+
 @end
 
 @implementation GBPing {
@@ -513,8 +516,8 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
         }
       } else {
         // Check if we're in the transition grace period after setup
-        // During this time, we silently ignore sequence mismatches from stale
-        // packets
+        // During this time, we silently suppress stale packets entirely
+        // (both logging AND delegate callbacks) to prevent ICMP storms
         BOOL inTransitionGracePeriod = NO;
         if (self.setupCompletionTime != nil) {
           NSTimeInterval timeSinceSetup =
@@ -522,35 +525,43 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
           inTransitionGracePeriod = (timeSinceSetup < kTransitionGracePeriod);
         }
 
-        if ([self isValidPingResponsePacket:packet] == YES) {
-          if (!inTransitionGracePeriod) {
+        if (inTransitionGracePeriod) {
+          // Silently suppress all stale/unexpected packets during grace period
+          self.stalePacketsSuppressed++;
+        } else {
+          // Log summary of suppressed packets when grace period ends
+          if (self.stalePacketsSuppressed > 0) {
+            NSLog(@"GBPing: Transition grace period ended for '%@' - suppressed %lu stale packet(s)",
+                  self.hostAddressString, (unsigned long)self.stalePacketsSuppressed);
+            self.stalePacketsSuppressed = 0;
+          }
+
+          if ([self isValidPingResponsePacket:packet] == YES) {
             NSLog(@"GBPing: Hostname '%@' matched but GBPingSummary with "
                   @"sequence number (%lu) not found.",
                   self.hostAddressString, (unsigned long)seqNo);
-          }
-          // Create a dummy GBPingSummary (since we won't have one in
-          // self.pendingPings).
-          GBPingSummary *pingSummary = [GBPingSummary new];
+            // Create a dummy GBPingSummary (since we won't have one in
+            // self.pendingPings).
+            GBPingSummary *pingSummary = [GBPingSummary new];
 
-          // construct ping summary, as much as it can
-          pingSummary.sequenceNumber = seqNo;
-          NSString *host = [self stringForAddress:&addr];
-          pingSummary.host = host ?: self.hostAddressString;
-          pingSummary.sendDate = [NSDate date];
-          pingSummary.ttl = 0;
-          pingSummary.payloadSize = 0;
-          pingSummary.status = GBPingStatusFail;
+            // construct ping summary, as much as it can
+            pingSummary.sequenceNumber = seqNo;
+            NSString *host = [self stringForAddress:&addr];
+            pingSummary.host = host ?: self.hostAddressString;
+            pingSummary.sendDate = [NSDate date];
+            pingSummary.ttl = 0;
+            pingSummary.payloadSize = 0;
+            pingSummary.status = GBPingStatusFail;
 
-          if (self.delegate &&
-              [self.delegate respondsToSelector:@selector
-                             (ping:didReceiveUnexpectedReplyWithSummary:)]) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-              [self.delegate ping:self
-                  didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
-            });
-          }
-        } else {
-          if (!inTransitionGracePeriod) {
+            if (self.delegate &&
+                [self.delegate respondsToSelector:@selector
+                               (ping:didReceiveUnexpectedReplyWithSummary:)]) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                [self.delegate ping:self
+                    didReceiveUnexpectedReplyWithSummary:[pingSummary copy]];
+              });
+            }
+          } else {
             NSLog(
                 @"GBPing: Received ICMP packet from '%@' that didn't match the "
                 @"next sequence number (%lu) but packet was not valid ICMP "
