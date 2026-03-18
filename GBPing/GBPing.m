@@ -562,11 +562,13 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
               });
             }
           } else {
+            if (self.debug) {
             NSLog(
                 @"GBPing: Received ICMP packet from '%@' that didn't match the "
                 @"next sequence number (%lu) but packet was not valid ICMP "
                 @"Ping Response packet so ignoring.",
                 self.hostAddressString, (unsigned long)seqNo);
+            }
           }
         }
       }
