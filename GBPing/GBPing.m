@@ -493,10 +493,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
 
           pingSummary.status = GBPingStatusSuccess;
 
-          // invalidate the timeouttimer
+          // disarm the timeout for this ping: removing the key makes the
+          // scheduled timeout block no-op when it fires (see -sendPing).
           [self.timeoutTimersLock lock];
-          NSTimer *timer = self.timeoutTimers[key];
-          [timer invalidate];
           [self.timeoutTimers removeObjectForKey:key];
           [self.timeoutTimersLock unlock];
 
@@ -708,37 +707,45 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
             [self->_pendingPingsLock unlock];
           });
 
-      // add a timeout timer
-      dispatch_block_t timeoutBlock = [^{
-        newPingSummary.status = GBPingStatusFail;
-
-        if (self.delegate && [self.delegate respondsToSelector:@selector
-                                            (ping:didTimeoutWithSummary:)]) {
-          dispatch_async(dispatch_get_main_queue(), ^{
-            [self.delegate ping:self didTimeoutWithSummary:pingSummaryCopy];
-          });
-        }
-
-        [self.timeoutTimersLock lock];
-        [self.timeoutTimers removeObjectForKey:key];
-        [self.timeoutTimersLock unlock];
-      } copy];
-
-      NSTimer *timeoutTimer =
-          [NSTimer timerWithTimeInterval:self.timeout
-                                  target:self
-                                selector:@selector(_invokeTimeoutCallback:)
-                                userInfo:timeoutBlock
-                                 repeats:NO];
-      [[NSRunLoop mainRunLoop] addTimer:timeoutTimer
-                                forMode:NSRunLoopCommonModes];
-
-      // keep a local ref to it
+      // Arm the timeout as a plain dispatch_after on the main queue instead of
+      // an NSTimer on the main run loop. NSTimer / CFRunLoopTimer are not
+      // thread-safe: arming it here (on the send thread) while -listenOnce (the
+      // listen thread) or -stop tore it down and the main run loop fired it
+      // raced on the timer's internal state and crashed in
+      // -[__NSCFTimer userInfo] (EXC_BAD_ACCESS, sc-1486). The block below
+      // always fires but no-ops unless this ping's key is still armed in
+      // self.timeoutTimers; a reply (-listenOnce) or -stop disarm it by removing
+      // the key, all guarded by timeoutTimersLock. This mirrors the pending-
+      // pings cleanup above and does no cross-thread run-loop mutation.
       if (self.timeoutTimers) {
         [self.timeoutTimersLock lock];
-        self.timeoutTimers[key] = timeoutTimer;
+        self.timeoutTimers[key] = @YES;
         [self.timeoutTimersLock unlock];
       }
+
+      dispatch_after(
+          dispatch_time(DISPATCH_TIME_NOW,
+                        (int64_t)(self.timeout * NSEC_PER_SEC)),
+          dispatch_get_main_queue(), ^{
+            [self.timeoutTimersLock lock];
+            BOOL armed = (self.timeoutTimers[key] != nil);
+            [self.timeoutTimers removeObjectForKey:key];
+            [self.timeoutTimersLock unlock];
+
+            // a reply already handled this ping, or the pinger was stopped
+            if (!armed) {
+              return;
+            }
+
+            newPingSummary.status = GBPingStatusFail;
+
+            if (self.delegate && [self.delegate respondsToSelector:@selector
+                                                (ping:didTimeoutWithSummary:)]) {
+              dispatch_async(dispatch_get_main_queue(), ^{
+                [self.delegate ping:self didTimeoutWithSummary:pingSummaryCopy];
+              });
+            }
+          });
 
       // notify delegate about this
       if (self.delegate && [self.delegate respondsToSelector:@selector
@@ -826,13 +833,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       self.pendingPings = nil;
 
       if (self.timeoutTimers != nil) {
+        // disarm all pending timeouts: any already-scheduled timeout blocks
+        // no-op once their key is gone (see -sendPing).
         [self.timeoutTimersLock lock];
-        NSDictionary *timersSnapshot = [self.timeoutTimers copy];
-        for (NSNumber *key in timersSnapshot) {
-          NSTimer *timer = timersSnapshot[key];
-          [timer invalidate];
-        }
-
         [self.timeoutTimers removeAllObjects];
         self.timeoutTimers = nil;
         [self.timeoutTimersLock unlock];
@@ -1151,13 +1154,6 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
     }
 
     return self.payloadTemplate;
-  }
-}
-
-- (void)_invokeTimeoutCallback:(NSTimer *)timer {
-  dispatch_block_t callback = timer.userInfo;
-  if (callback) {
-    callback();
   }
 }
 
