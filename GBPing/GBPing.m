@@ -460,6 +460,33 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
         return;
       }
 
+      // Darwin sends a copy of each ICMP echo reply to every SOCK_DGRAM ICMP
+      // socket on the host. Thus a different process, or a second GBPing
+      // object, that pings the same host also arrives here. The source address
+      // is correct, therefore the host test above cannot remove such a packet.
+      // Only the identifier is different.
+      //
+      // Compare the identifier before the lookup in pendingPings. The lookup
+      // uses the sequence number only, thus a foreign reply became a "stale
+      // packet", and a collision of sequence numbers let a foreign reply
+      // consume the entry of a real ping. ICMP error messages (for example
+      // "port unreachable" from a traceroute probe) have no identifier and
+      // this test also removes them.
+      //
+      // isValidPing4ResponsePacket / isValidPing6ResponsePacket apply the same
+      // test on the accepted path, thus this test rejects no packet that the
+      // pinger accepts today.
+      if (OSSwapBigToHostInt16(headerPointer->identifier) != self.identifier) {
+        if (self.debug) {
+          NSLog(@"GBPing: Ignored a packet from '%@' with identifier %u. This "
+                @"pinger uses identifier %u.",
+                self.hostAddressString,
+                OSSwapBigToHostInt16(headerPointer->identifier),
+                self.identifier);
+        }
+        return;
+      }
+
       NSUInteger seqNo =
           (NSUInteger)OSSwapBigToHostInt16(headerPointer->sequenceNumber);
       NSNumber *key = @(seqNo);
