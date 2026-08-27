@@ -590,7 +590,16 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
   // If we recieved a fatal error above, shut everything down.
   if (fatalError == YES) {
 
-    NSLog(@"GBPing: listen: fatal error: %d", err);
+    // -stop closes the socket to unblock this thread. recvfrom then returns
+    // EBADF. That close is the normal way to end the listen thread, so do not
+    // report it as an error. -stop clears isPinging before it closes the
+    // socket, thus isPinging also covers the window before isStopped is set.
+    BOOL expectedClose =
+        (self.isStopped || !self.isPinging) && (err == EBADF || err == 0);
+
+    if (!expectedClose) {
+      NSLog(@"GBPing: listen: fatal error: %d", err);
+    }
 
     if (err == 0) {
       err = EPIPE;
