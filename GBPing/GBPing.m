@@ -16,6 +16,7 @@
 
 #import "ICMPHeader.h"
 
+#include <net/if.h>
 #include <netinet/in.h>
 #include <netinet/ip6.h>
 #include <sys/socket.h>
@@ -333,6 +334,27 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       return;
     }
 
+    // Bind the socket to one interface, so the pings do not follow the default
+    // route. A full-tunnel VPN sends even a LAN address into the tunnel.
+    NSString *boundInterfaceName = self.boundInterfaceName;
+    if (boundInterfaceName.length > 0 && self.socket > 0) {
+      unsigned int interfaceIndex = if_nametoindex(boundInterfaceName.UTF8String);
+      int result = -1;
+      if (interfaceIndex != 0) {
+        if (self->hostAddressFamily == AF_INET) {
+          result = setsockopt(self.socket, IPPROTO_IP, IP_BOUND_IF,
+                              &interfaceIndex, sizeof(interfaceIndex));
+        } else if (self->hostAddressFamily == AF_INET6) {
+          result = setsockopt(self.socket, IPPROTO_IPV6, IPV6_BOUND_IF,
+                              &interfaceIndex, sizeof(interfaceIndex));
+        }
+      }
+      if (result < 0 && self.debug) {
+        NSLog(@"GBPing: Failed to bind to interface %@ (index %u, errno %d)",
+              boundInterfaceName, interfaceIndex, errno);
+      }
+    }
+
     // set ttl on the socket
     if (self.ttl && self.socket > 0) {
       int result = 0;
@@ -456,6 +478,33 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       if (headerPointer == NULL) {
         if (self.debug) {
           NSLog(@"GBPing: Could not extract ICMP header from received packet.");
+        }
+        return;
+      }
+
+      // Darwin sends a copy of each ICMP echo reply to every SOCK_DGRAM ICMP
+      // socket on the host. Thus a different process, or a second GBPing
+      // object, that pings the same host also arrives here. The source address
+      // is correct, therefore the host test above cannot remove such a packet.
+      // Only the identifier is different.
+      //
+      // Compare the identifier before the lookup in pendingPings. The lookup
+      // uses the sequence number only, thus a foreign reply became a "stale
+      // packet", and a collision of sequence numbers let a foreign reply
+      // consume the entry of a real ping. ICMP error messages (for example
+      // "port unreachable" from a traceroute probe) have no identifier and
+      // this test also removes them.
+      //
+      // isValidPing4ResponsePacket / isValidPing6ResponsePacket apply the same
+      // test on the accepted path, thus this test rejects no packet that the
+      // pinger accepts today.
+      if (OSSwapBigToHostInt16(headerPointer->identifier) != self.identifier) {
+        if (self.debug) {
+          NSLog(@"GBPing: Ignored a packet from '%@' with identifier %u. This "
+                @"pinger uses identifier %u.",
+                self.hostAddressString,
+                OSSwapBigToHostInt16(headerPointer->identifier),
+                self.identifier);
         }
         return;
       }
@@ -590,7 +639,16 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
   // If we recieved a fatal error above, shut everything down.
   if (fatalError == YES) {
 
-    NSLog(@"GBPing: listen: fatal error: %d", err);
+    // -stop closes the socket to unblock this thread. recvfrom then returns
+    // EBADF. That close is the normal way to end the listen thread, so do not
+    // report it as an error. -stop clears isPinging before it closes the
+    // socket, thus isPinging also covers the window before isStopped is set.
+    BOOL expectedClose =
+        (self.isStopped || !self.isPinging) && (err == EBADF || err == 0);
+
+    if (!expectedClose) {
+      NSLog(@"GBPing: listen: fatal error: %d", err);
+    }
 
     if (err == 0) {
       err = EPIPE;
