@@ -26,6 +26,11 @@ typedef void(^StartupCallback)(BOOL success, NSError * _Nullable error);
 @property (assign, atomic) NSTimeInterval           timeout;
 @property (assign, atomic) NSUInteger               payloadSize;
 @property (assign, atomic) NSUInteger               ttl;
+/// The name of the interface that the socket must use, for example "en0", or nil
+/// for the route that the system picks. A full-tunnel VPN routes even a LAN
+/// address into the tunnel. A socket bound to the Wi-Fi or Ethernet interface
+/// still reaches the router directly. Takes effect at the next setup.
+@property (copy, atomic, nullable) NSString         *boundInterfaceName;
 @property (assign, atomic, readonly) BOOL           isPinging;
 @property (assign, atomic, readonly) BOOL           isReady;
 @property (assign, atomic, readonly) BOOL           isStopped;
