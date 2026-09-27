@@ -31,6 +31,11 @@ typedef void(^StartupCallback)(BOOL success, NSError * _Nullable error);
 /// address into the tunnel. A socket bound to the Wi-Fi or Ethernet interface
 /// still reaches the router directly. Takes effect at the next setup.
 @property (copy, atomic, nullable) NSString         *boundInterfaceName;
+/// When YES, -startPinging starts only the listener, and each ping leaves when the
+/// caller calls -sendPingNow. Two pingers can then send at one moment, so a caller that
+/// subtracts one round trip from the other cancels the delay that both share. With the
+/// default NO, a send thread pings every pingPeriod, at a phase of its own.
+@property (assign, atomic) BOOL                     sendsOnDemand;
 @property (assign, atomic, readonly) BOOL           isPinging;
 @property (assign, atomic, readonly) BOOL           isReady;
 @property (assign, atomic, readonly) BOOL           isStopped;
@@ -39,6 +44,9 @@ typedef void(^StartupCallback)(BOOL success, NSError * _Nullable error);
 
 -(void)setupWithBlock:(StartupCallback)callback;
 -(void)startPinging;
+/// Sends one ping now, on the calling thread. Only for a pinger with sendsOnDemand set,
+/// after -startPinging. The reply or the timeout goes to the delegate, as for any ping.
+-(void)sendPingNow NS_SWIFT_NAME(sendPingNow());
 -(void)stop;
 
 @end
