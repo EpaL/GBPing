@@ -199,8 +199,8 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
     return;
   }
 
-  // set up data structs
-  self.nextSequenceNumber = 0;
+  // set up data structs. The sequence numbers continue from the last session, so a
+  // timeout block or a late reply of an old socket matches no ping of this one.
   self.pendingPings = [[NSMutableDictionary alloc] init];
   self.timeoutTimers = [[NSMutableDictionary alloc] init];
   _pendingPingsLock = [[NSLock alloc] init];
@@ -532,7 +532,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       GBPingSummary *pingSummary = [storedSummary copy];
 
       if (pingSummary != nil) {
-        if ([self isValidPingResponsePacket:packet] == YES) {
+        // An open entry proves that the ping is ours. The order test rejected the
+        // reply to the last ping before the sequence number wrapped to 0.
+        if ([self isValidPingResponsePacket:packet requireEarlierSequence:NO] == YES) {
           // override the source address (we might have sent to google.com and
           // 172.123.213.192 replied)
           pingSummary.receiveDate = receiveDate;
@@ -758,9 +760,15 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
 
       // add it to pending pings
       NSNumber *key = @(self.nextSequenceNumber);
-      [_pendingPingsLock lock];
-      self.pendingPings[key] = newPingSummary;
-      [_pendingPingsLock unlock];
+      // The blocks below act on the containers of this session only. They read
+      // self.pendingPings and self.timeoutTimers when they fired, and after a restart
+      // those were the containers of the new session.
+      NSMutableDictionary *pending = self.pendingPings;
+      NSLock *pendingLock = _pendingPingsLock;
+      NSMutableDictionary *timers = self.timeoutTimers;
+      [pendingLock lock];
+      pending[key] = newPingSummary;
+      [pendingLock unlock];
 
       // increment sequence number
       self.nextSequenceNumber += 1;
@@ -779,10 +787,10 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
                         (int64_t)((self.timeout + kPendingPingsCleanupGrace) *
                                   NSEC_PER_SEC)),
           dispatch_get_main_queue(), ^{
-            // remove the ping from the pending list
-            [self->_pendingPingsLock lock];
-            [self.pendingPings removeObjectForKey:key];
-            [self->_pendingPingsLock unlock];
+            // remove the ping from the pending list of its own session
+            [pendingLock lock];
+            [pending removeObjectForKey:key];
+            [pendingLock unlock];
           });
 
       // Arm the timeout as a plain dispatch_after on the main queue instead of
@@ -795,9 +803,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       // self.timeoutTimers; a reply (-listenOnce) or -stop disarm it by removing
       // the key, all guarded by timeoutTimersLock. This mirrors the pending-
       // pings cleanup above and does no cross-thread run-loop mutation.
-      if (self.timeoutTimers) {
+      if (timers) {
         [self.timeoutTimersLock lock];
-        self.timeoutTimers[key] = @YES;
+        timers[key] = @YES;
         [self.timeoutTimersLock unlock];
       }
 
@@ -805,9 +813,11 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
           dispatch_time(DISPATCH_TIME_NOW,
                         (int64_t)(self.timeout * NSEC_PER_SEC)),
           dispatch_get_main_queue(), ^{
+            // -stop empties the containers of its session, so a block of a stopped
+            // session finds no key.
             [self.timeoutTimersLock lock];
-            BOOL armed = (self.timeoutTimers[key] != nil);
-            [self.timeoutTimers removeObjectForKey:key];
+            BOOL armed = (timers[key] != nil);
+            [timers removeObjectForKey:key];
             [self.timeoutTimersLock unlock];
 
             // a reply already handled this ping, or the pinger was stopped
@@ -922,8 +932,8 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
 
       self.payloadTemplate = nil;
 
-      // reset seq number
-      self.nextSequenceNumber = 0;
+      // Keep the sequence number. A restart that numbered its pings from 0 again gave
+      // the timeout of an old ping to the new ping with the same number.
 
       // Clear setup completion time to ensure fresh grace period on next setup
       self.setupCompletionTime = nil;
@@ -1114,15 +1124,23 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 }
 
 - (BOOL)isValidPingResponsePacket:(NSMutableData *)packet {
+  return [self isValidPingResponsePacket:packet requireEarlierSequence:YES];
+}
+
+/// With requireEarlierSequence, the sequence number must be less than the next one.
+- (BOOL)isValidPingResponsePacket:(NSMutableData *)packet
+           requireEarlierSequence:(BOOL)requireEarlierSequence {
   BOOL result = NO;
 
   if (packet != nil && self.isReady == YES) {
     switch (hostAddressFamily) {
     case AF_INET: {
-      result = [self isValidPing4ResponsePacket:packet];
+      result = [self isValidPing4ResponsePacket:packet
+                         requireEarlierSequence:requireEarlierSequence];
     } break;
     case AF_INET6: {
-      result = [self isValidPing6ResponsePacket:packet];
+      result = [self isValidPing6ResponsePacket:packet
+                         requireEarlierSequence:requireEarlierSequence];
     } break;
     default: {
       // There are reasons why we might receive an invalid Ping packet. Handle
@@ -1136,7 +1154,8 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 
 // Returns true if the packet looks like a valid ping response packet destined
 // for us.
-- (BOOL)isValidPing4ResponsePacket:(NSMutableData *)packet {
+- (BOOL)isValidPing4ResponsePacket:(NSMutableData *)packet
+            requireEarlierSequence:(BOOL)requireEarlierSequence {
   BOOL result;
   NSUInteger icmpHeaderOffset;
   GBICMPHeader *icmpPtr;
@@ -1161,7 +1180,7 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
     if (receivedChecksum == calculatedChecksum) {
       if ((icmpPtr->type == kICMPv4TypeEchoReply) && (icmpPtr->code == 0)) {
         if (packetIdentifier == self.identifier) {
-          if (packetSeqNo < self.nextSequenceNumber) {
+          if (!requireEarlierSequence || packetSeqNo < self.nextSequenceNumber) {
             result = YES;
           } else if (self.debug) {
             // Sequence number is >= nextSequenceNumber (shouldn't happen during
@@ -1193,7 +1212,8 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 
 // Returns true if the IPv6 packet looks like a valid ping response packet
 // destined for us.
-- (BOOL)isValidPing6ResponsePacket:(NSMutableData *)packet {
+- (BOOL)isValidPing6ResponsePacket:(NSMutableData *)packet
+            requireEarlierSequence:(BOOL)requireEarlierSequence {
   BOOL result;
   const GBICMPHeader *icmpPtr;
 
@@ -1204,8 +1224,9 @@ static uint16_t in_cksum(const void *buffer, size_t bufferLen)
 
     if ((icmpPtr->type == kICMPv6TypeEchoReply) && (icmpPtr->code == 0)) {
       if (OSSwapBigToHostInt16(icmpPtr->identifier) == self.identifier) {
-        if (OSSwapBigToHostInt16(icmpPtr->sequenceNumber) <
-            self.nextSequenceNumber) {
+        if (!requireEarlierSequence ||
+            OSSwapBigToHostInt16(icmpPtr->sequenceNumber) <
+                self.nextSequenceNumber) {
           result = YES;
         }
       }
