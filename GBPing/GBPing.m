@@ -427,14 +427,14 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
   }
 }
 
-- (void)sendPingNow {
+- (NSInteger)sendPingNow {
   if (!self.sendsOnDemand) {
-    return;
+    return NSNotFound;
   }
   // -sendPing reads and bumps nextSequenceNumber without a lock. Only one thread sends
   // at a time: the send thread, or the callers of this method, never both.
   @synchronized(self) {
-    [self sendPing];
+    return [self sendPing];
   }
 }
 
@@ -706,7 +706,9 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
   }
 }
 
-- (void)sendPing {
+/// Returns the sequence number of the ping, or NSNotFound when no ping left.
+- (NSInteger)sendPing {
+  NSInteger sentSequenceNumber = NSNotFound;
   if (self.isPinging) {
 
     int err;
@@ -738,12 +740,16 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
     if (self.socket == 0) {
       bytesSent = -1;
       err = EBADF;
+      // No ping left, so its failure must match no ping of the caller. A sequence
+      // number of 0 matched the first ping after a restart.
+      newPingSummary.sequenceNumber = NSNotFound;
     } else {
       // record the send date
       NSDate *sendDate = [NSDate date];
 
       // construct ping summary, as much as it can
       newPingSummary.sequenceNumber = self.nextSequenceNumber;
+      sentSequenceNumber = (NSInteger)self.nextSequenceNumber;
       newPingSummary.host = self.host;
       newPingSummary.sendDate = sendDate;
       newPingSummary.ttl = self.ttl;
@@ -876,6 +882,7 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
       }
     }
   }
+  return sentSequenceNumber;
 }
 
 - (void)stop {
