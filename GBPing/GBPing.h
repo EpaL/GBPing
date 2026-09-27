@@ -45,8 +45,11 @@ typedef void(^StartupCallback)(BOOL success, NSError * _Nullable error);
 -(void)setupWithBlock:(StartupCallback)callback;
 -(void)startPinging;
 /// Sends one ping now, on the calling thread. Only for a pinger with sendsOnDemand set,
-/// after -startPinging. The reply or the timeout goes to the delegate, as for any ping.
--(void)sendPingNow NS_SWIFT_NAME(sendPingNow());
+/// after -startPinging. Returns the sequence number of the ping, or NSNotFound when no
+/// ping left: the pinger is not on demand, it does not ping, or it has no socket. The
+/// reply, the timeout or the send failure of the ping goes to the delegate, with this
+/// sequence number in its summary. A caller can thus give each event to its own ping.
+-(NSInteger)sendPingNow NS_SWIFT_NAME(sendPingNow());
 -(void)stop;
 
 @end
