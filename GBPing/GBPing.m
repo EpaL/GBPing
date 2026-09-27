@@ -420,7 +420,21 @@ static NSTimeInterval const kDefaultTimeout = 2.0;
     // we're pinging now
     self.isPinging = YES;
     [listenThread start];
-    [sendThread start];
+    // An on-demand pinger has no send loop: -sendPingNow sends each ping.
+    if (!self.sendsOnDemand) {
+      [sendThread start];
+    }
+  }
+}
+
+- (void)sendPingNow {
+  if (!self.sendsOnDemand) {
+    return;
+  }
+  // -sendPing reads and bumps nextSequenceNumber without a lock. Only one thread sends
+  // at a time: the send thread, or the callers of this method, never both.
+  @synchronized(self) {
+    [self sendPing];
   }
 }
 
